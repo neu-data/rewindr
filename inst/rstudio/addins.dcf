@@ -1,0 +1,9 @@
+Name: Rewind current script
+Description: Record every step of the script in the editor and open the time-travel debugger.
+Binding: addin_rewind_script
+Interactive: true
+
+Name: Rewind selection
+Description: Record every step of the selected pipeline or code and open the time-travel debugger.
+Binding: addin_rewind_selection
+Interactive: true

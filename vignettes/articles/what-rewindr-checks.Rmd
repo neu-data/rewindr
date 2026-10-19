@@ -1,0 +1,136 @@
+---
+title: "What rewindr checks"
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+library(rewindr)
+```
+
+This article explains how rewindr records code, every check it runs, and how
+to tune the checks.
+
+## How code is recorded
+
+**Pipelines.** The native pipe is rewritten by R's parser, so
+`x |> f(a) |> g(b)` reaches rewindr as `g(f(x, a), b)`. rewindr splits any
+chain of calls whose *first positional argument* is itself a call (or a
+data object) into stages, and runs each stage on the previous result.
+magrittr pipes (`%>%`) are kept as pipes, so `.` placeholders keep working.
+
+```{r}
+tr <- rewind(mtcars |> subset(cyl == 4) |> transform(kpl = mpg * 0.425))
+timeline(tr)[, c("step", "label", "rows", "cols")]
+```
+
+**Scripts and blocks.** `rewind_script()` and `rewind({ ... })` run one
+statement at a time. Assignments whose right-hand side is a pipeline are
+split into stages. Any other statement runs as a whole, and every data
+frame it creates or changes is recorded as a new *version* of that object.
+That covers in-place edits such as `df$x <- ...` and `dt[, x := ...]`:
+
+```{r}
+tr <- rewind({
+  d <- data.frame(x = c("1", "2", "oops"))
+  d$x <- as.numeric(d$x)
+})
+lineage(tr, "d")
+```
+
+**Sandbox.** Code runs in a new environment whose parent is the environment
+you pass (by default the caller for `rewind()`, the global environment for
+`rewind_script()`). New objects stay in the sandbox, so your workspace does
+not change.
+
+**Errors and warnings.** Errors do not stop the recording; the failing step
+is kept and you can look at its input. Warnings are captured per step.
+Messages are silenced.
+
+**Snapshots.** Each state is kept as an R object. Copy-on-modify means
+unchanged columns are shared between states. `data.table` objects are
+deep-copied, because `:=` would otherwise rewrite earlier states.
+
+## The checks
+
+| Type | Severity | Raised when |
+|---|---|---|
+| `error` | error | The step failed. |
+| `empty` | error | The step returned zero rows from a non-empty input. |
+| `join_key_type` | error | Join keys have different classes (e.g. character and numeric). |
+| `join_unmatched` | warning / info | More than `max_join_unmatched` of left-hand rows found no match. It is a warning above 10% or when there are near-miss keys. |
+| `join_fanout` | warning | The lookup table has duplicated keys that multiplied left-hand rows. |
+| `row_loss` | warning / info | A non-join step lost more than `max_row_loss` of rows. Filters (`filter`, `subset`, `distinct`, `drop_na`, ...) are only warned about above `filter_row_loss`. |
+| `filter_drops_na` | warning | A filter removed rows only because the columns it tests were `NA`. |
+| `new_na` | warning / info | A column gained missing values. It is info for columns created at that step (outside joins). |
+| `type_change` | info | A column's class changed. |
+| `key_duplicated` | warning | With `key`, the key was unique before the step and is not after. |
+| `r_warning` | warning | R raised a warning during the step, e.g. "NAs introduced by coercion". |
+| `row_gain` | warning | Optional: a non-join step grew rows by more than `max_row_gain`. |
+
+Aggregations and reshapes (`summarise`, `count`, `pivot_longer`,
+`pivot_wider`, `unnest`, `bind_rows`, ...) are expected to change the row
+count and are not flagged.
+
+### Join diagnostics
+
+For `left_join`, `inner_join`, `right_join`, `full_join`, `semi_join`,
+`anti_join`, `nest_join` and `merge()`, rewindr evaluates the lookup table
+and the `by` argument (character vectors, named vectors, `join_by()`, and
+`by.x`/`by.y`) and compares the keys:
+
+```{r}
+x <- data.frame(id = c("A1", "A2", "A3", "A4"), v = 1:4)
+y <- data.frame(id = c("A1", " a2", "A3", "A3"), w = 1:4)
+tr <- rewind(x |> merge(y, by = "id"))
+tr$steps[[2]]$join[c("unmatched_rows", "near_miss_keys", "dup_y_examples", "fanout_rows")]
+```
+
+A *near miss* is an unmatched key that matches after trimming whitespace,
+collapsing repeated spaces and ignoring case, which is the most common
+reason for silently lost join rows.
+
+## Tuning the rules
+
+`rewind_rules()` controls the thresholds:
+
+```{r}
+args(rewind_rules)
+```
+
+Stricter for a production job:
+
+```{r, eval = FALSE}
+strict <- rewind_rules(max_row_loss = 0, max_join_unmatched = 0, max_row_gain = 0)
+tr <- rewind_script("etl.R", rules = strict)
+```
+
+Looser for exploratory work with expected gaps:
+
+```{r, eval = FALSE}
+relaxed <- rewind_rules(max_join_unmatched = 0.2, flag_type_change = FALSE)
+```
+
+## Diffs
+
+`df_diff()` is also useful on its own, for any two data frames:
+
+```{r}
+before <- data.frame(id = 1:5, price = c("10", "12", "n/a", "9", "15"))
+after <- transform(before, price = suppressWarnings(as.numeric(price)))[-4, ]
+df_diff(before, after, key = "id")
+```
+
+Rows are aligned by `key` when given (and unique on both sides), otherwise
+by position when the row counts match. Cell comparison is skipped above
+`max_cells` (5 million by default).
+
+## Limitations
+
+* The native pipe's `_` placeholder becomes a named argument, so that stage
+  is folded into the next one instead of being split out.
+* Statements that are not assigned (for example a bare `print(df)`) are run
+  but not split into stages.
+* Snapshots live in memory; very large data may need sampling first.
+* `data.table` only allows `:=` from code it considers "data.table aware".
+  Scripts and the global environment qualify; code run from inside another
+  package's namespace may not.

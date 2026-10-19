@@ -1,0 +1,48 @@
+Package: rewindr
+Title: Time-Travel Debugging for Data Pipelines
+Version: 0.1.0
+Authors@R: c(
+    person("Bernard Isekah", "Osangir", , "b.osangir@gmail.com", role = c("aut", "cre")),
+    person("Neudata Consulting Ltd", role = c("cph", "fnd"))
+  )
+Description: Records the data after every step of a pipeline or script and
+    finds the step where it silently went wrong. Native and 'magrittr' pipes
+    are split into stages, scripts run statement by statement in a sandbox,
+    and in-place edits become new versions of an object. Consecutive states
+    are compared for lost or duplicated rows, new missing values, type
+    changes and changed cells, and joins are checked for unmatched keys,
+    keys that differ only in whitespace or case, and duplicated lookup keys
+    that multiply rows. A 'shiny' app scrubs backward and forward through
+    every state. Fixes can be suggested from built-in rules or requested
+    from the 'Claude' API, re-run in a sandbox and compared with the
+    original, and a script can be turned into a 'Docker' recipe with pinned
+    package versions. Developed by Neudata Consulting Ltd.
+License: MIT + file LICENSE
+URL: https://neu-data.github.io/rewindr/, https://github.com/neu-data/rewindr
+BugReports: https://github.com/neu-data/rewindr/issues
+Depends:
+    R (>= 4.1)
+Imports:
+    stats,
+    tools,
+    utils
+Suggests:
+    bslib,
+    data.table,
+    dplyr,
+    DT,
+    htmltools,
+    httr2,
+    jsonlite,
+    knitr,
+    magrittr,
+    rmarkdown,
+    rstudioapi,
+    shiny,
+    testthat (>= 3.0.0)
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+Encoding: UTF-8
+Language: en-US
+Roxygen: list(markdown = TRUE)
+Config/roxygen2/version: 8.0.0

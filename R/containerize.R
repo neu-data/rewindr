@@ -1,0 +1,133 @@
+# Script -> reproducible container -----------------------------------------
+
+#' Find the packages a script uses
+#'
+#' Parses the code (it is not run) and collects `library()`, `require()`,
+#' `requireNamespace()` and `pkg::fun` references, with the version
+#' installed on this machine.
+#'
+#' @param file Path to an R script.
+#' @param text Alternatively, the code as text.
+#' @return A data frame with `package`, `version` and `installed`.
+#' @examples
+#' script_packages(text = c("library(stats)", "x <- tools::file_ext('a.R')",
+#'                          "requireNamespace('jsonlite')"))
+#' @export
+script_packages <- function(file = NULL, text = NULL) {
+  if (is.null(text)) text <- readLines(file, warn = FALSE)
+  exprs <- parse(text = text, keep.source = FALSE)
+  pkgs <- character(0)
+  walk <- function(e) {
+    if (is.call(e)) {
+      fn <- call_fun_name(e)
+      head <- e[[1]]
+      if (is.call(head) && is.symbol(head[[1]]) && as.character(head[[1]]) %in% c("::", ":::")) {
+        pkgs <<- c(pkgs, as.character(head[[2]]))
+      }
+      if (!is.na(fn) && fn %in% c("library", "require", "requireNamespace", "loadNamespace") && length(e) >= 2) {
+        a <- e[[2]]
+        if (is.symbol(a) || is.character(a)) pkgs <<- c(pkgs, as.character(a))
+      }
+      if (!is.na(fn) && fn %in% c("p_load") ) {
+        for (a in call_parts(e)[-1]) if (is.symbol(a) || is.character(a)) pkgs <<- c(pkgs, as.character(a))
+      }
+      for (a in call_parts(e)) walk(a)
+    } else if (is.expression(e) || is.list(e)) {
+      for (a in e) walk(a)
+    }
+  }
+  walk(exprs)
+  base_pkgs <- rownames(utils::installed.packages(priority = "base"))
+  pkgs <- setdiff(unique(pkgs), c(base_pkgs, "rewindr"))
+  if (!length(pkgs)) return(data.frame(package = character(), version = character(), installed = logical()))
+  ver <- vapply(pkgs, function(p) tryCatch(as.character(utils::packageVersion(p)), error = function(e) NA_character_), character(1))
+  data.frame(package = pkgs, version = unname(ver), installed = !is.na(ver), stringsAsFactors = FALSE)
+}
+
+# Relative file paths that appear as string literals and exist next to the script.
+script_data_files <- function(text, dir) {
+  exprs <- parse(text = text, keep.source = FALSE)
+  strs <- character(0)
+  walk <- function(e) {
+    if (is.character(e)) strs <<- c(strs, e)
+    else if (is.call(e) || is.expression(e)) for (a in call_parts(e)) walk(a)
+  }
+  walk(exprs)
+  strs <- unique(strs[nzchar(strs) & !grepl("^[a-z]+://", strs) & nchar(strs) < 260])
+  strs[vapply(strs, function(s) !grepl("^(/|[A-Za-z]:)", s) && file.exists(file.path(dir, s)), logical(1))]
+}
+
+#' Turn a script into a reproducible container
+#'
+#' Writes a `Dockerfile` (and a `.dockerignore` and `README`) that pins the
+#' R version and the exact versions of every package the script uses, as
+#' installed on this machine. System libraries are resolved by `pak` at
+#' build time, and data files the script reads by relative path are copied in.
+#'
+#' @param file Path to the R script.
+#' @param out_dir Folder to write the container recipe into.
+#' @param r_version R version for the `rocker/r-ver` base image.
+#' @param overwrite Overwrite an existing recipe.
+#' @return The path to the Dockerfile, invisibly.
+#' @examples
+#' dir <- tempfile("job-")
+#' dir.create(dir)
+#' writeLines(c("library(stats)", "print(median(1:10))"), file.path(dir, "job.R"))
+#' containerize(file.path(dir, "job.R"))
+#' readLines(file.path(dir, "container", "Dockerfile"))
+#' unlink(dir, recursive = TRUE)
+#' @export
+containerize <- function(file, out_dir = file.path(dirname(file), "container"),
+                         r_version = paste(R.version$major, R.version$minor, sep = "."),
+                         overwrite = FALSE) {
+  stopifnot(file.exists(file))
+  text <- readLines(file, warn = FALSE)
+  pk <- script_packages(text = text)
+  data_files <- script_data_files(text, dirname(file))
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+  dockerfile <- file.path(out_dir, "Dockerfile")
+  if (file.exists(dockerfile) && !overwrite) stop(dockerfile, " exists; use overwrite = TRUE.", call. = FALSE)
+
+  script_name <- basename(file)
+  file.copy(file, file.path(out_dir, script_name), overwrite = TRUE)
+  for (f in data_files) {
+    dest <- file.path(out_dir, f)
+    dir.create(dirname(dest), showWarnings = FALSE, recursive = TRUE)
+    file.copy(file.path(dirname(file), f), dest, overwrite = TRUE)
+  }
+
+  refs <- ifelse(pk$installed, paste0(pk$package, "@", pk$version), pk$package)
+  install <- if (length(refs)) {
+    c("RUN R -q -e 'install.packages(\"pak\", repos = sprintf(\"https://r-lib.github.io/p/pak/stable/%s/%s/%s\", .Platform$pkgType, R.Version()$os, R.Version()$arch))' \\",
+      sprintf("    && R -q -e 'pak::pkg_install(c(%s), upgrade = FALSE)' \\", paste0("\"", refs, "\"", collapse = ", ")),
+      "    && rm -rf /tmp/*")
+  } else character(0)
+
+  lines <- c(
+    sprintf("# Generated by rewindr::containerize() on %s from %s", format(Sys.Date()), script_name),
+    sprintf("FROM rocker/r-ver:%s", r_version),
+    "ENV LANG=en_US.UTF-8 TZ=Etc/UTC",
+    "WORKDIR /app",
+    install,
+    sprintf("COPY [\"%s\", \"./\"]", script_name),
+    if (length(data_files)) sprintf("COPY [\"%s\", \"./%s\"]", data_files, data_files),
+    sprintf("CMD [\"Rscript\", \"%s\"]", script_name)
+  )
+  writeLines(lines, dockerfile)
+  writeLines(c("container/", ".Rhistory", ".RData", ".git"), file.path(out_dir, ".dockerignore"))
+  tag <- tolower(gsub("[^A-Za-z0-9]+", "-", tools::file_path_sans_ext(script_name)))
+  readme <- c(
+    sprintf("# %s - container", script_name), "",
+    sprintf("R %s with %d pinned package(s):", r_version, nrow(pk)), "",
+    if (nrow(pk)) paste0("- ", pk$package, " ", ifelse(pk$installed, pk$version, "(not installed locally: latest)")),
+    if (length(data_files)) c("", "Data files copied:", paste0("- ", data_files)),
+    "", "Build and run:", "", "```bash",
+    sprintf("docker build -t %s .", tag),
+    sprintf("docker run --rm -v \"$PWD/output:/app/output\" %s", tag), "```"
+  )
+  writeLines(readme, file.path(out_dir, "README.md"))
+  missing <- pk$package[!pk$installed]
+  if (length(missing)) warning("Not installed locally, so not pinned: ", paste(missing, collapse = ", "), call. = FALSE)
+  message("Container recipe written to ", normalizePath(out_dir))
+  invisible(dockerfile)
+}

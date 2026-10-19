@@ -1,0 +1,58 @@
+// Neudata pkgdown styles
+
+$neudata-teal: #055F56;
+$neudata-blue: #0B376C;
+$neudata-navy: #04242F;
+$neudata-mist: #EAF2F5;
+
+.navbar {
+  background-color: $neudata-navy !important;
+  border-bottom: 4px solid $neudata-teal;
+}
+
+.navbar-brand {
+  font-weight: 700;
+}
+
+h1, .h1 {
+  font-weight: 800;
+}
+
+h2, .h2 {
+  border-bottom: 2px solid $neudata-teal;
+  padding-bottom: 0.25rem;
+  margin-top: 2rem;
+}
+
+h3, .h3 {
+  color: $neudata-blue;
+}
+
+// Package logo on the home page
+img.logo {
+  background: #fff;
+  border-radius: 8px;
+  padding: 4px;
+}
+
+// Reference index section headers
+.template-reference-index h2 {
+  color: $neudata-navy;
+}
+
+// Code blocks
+pre {
+  background-color: $neudata-mist;
+  border-left: 4px solid $neudata-teal;
+}
+
+footer {
+  border-top: 4px solid $neudata-teal;
+  background: $neudata-navy;
+  color: #fff;
+  padding: 1rem 1.5rem;
+
+  a {
+    color: #9FD3CB;
+  }
+}

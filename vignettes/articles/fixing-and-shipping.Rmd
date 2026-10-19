@@ -1,0 +1,115 @@
+---
+title: "Fixing code and shipping it"
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+library(rewindr)
+has_dplyr <- requireNamespace("dplyr", quietly = TRUE)
+```
+
+Finding the broken step is half the job. This article covers the other
+half: getting a fix, checking that it works, and packaging the result so it
+runs anywhere.
+
+## Rule-based fixes (offline)
+
+`suggest_fixes()` turns the issues into code. It needs no network or API
+key:
+
+```{r, eval = has_dplyr}
+tr <- rewind_script(rewind_example(), key = "order_id")
+fx <- suggest_fixes(tr)
+knitr::kable(fx[, c("step", "problem")])
+cat(fx$suggestion[1])
+```
+
+It covers the common silent failures: values that do not parse as numbers
+(with real examples of the offending values), join keys that differ by
+whitespace or case, duplicated lookup keys, key type mismatches, filters
+that drop `NA` rows, and empty results.
+
+## Fixes from Claude
+
+`ask_claude()` sends the recording to the Claude API and gets back a
+diagnosis, a list of changes and a complete revised script. You can also
+ask for new behaviour in plain English:
+
+```{r, eval = FALSE}
+Sys.setenv(ANTHROPIC_API_KEY = "...")   # or set it in ~/.Renviron
+
+fix <- ask_claude(tr)                    # fix the detected issues
+fix <- ask_claude(tr, "Also fill months with no orders with zero revenue")
+fix
+```
+
+Nothing runs automatically. Record the revised script and compare it with
+the original:
+
+```{r, eval = FALSE}
+new <- rewind_script(text = fix$code, key = "order_id")
+compare_traces(tr, new)
+issues(new)
+```
+
+In the app, the **Ask Claude** tab does the same with two buttons.
+
+**What is sent:** the source code, the timeline (one line per step), the
+issues, and up to five sample rows from the input and output of each step
+that has an issue, plus the join report. Use `max_rows = 0` to send no data
+values:
+
+```{r, eval = FALSE}
+fix <- ask_claude(tr, max_rows = 0)
+```
+
+**Model and cost:** the default is `claude-opus-5-5` with adaptive thinking
+and `effort = "high"`. Use `effort = "low"` or `"medium"` for faster,
+cheaper answers on small scripts, or pass another `model`.
+
+## Compare two runs
+
+`compare_traces()` works for any two recordings, not only AI fixes. It is a
+quick way to check a refactor:
+
+```{r, eval = has_dplyr}
+code <- readLines(rewind_example())
+code <- sub("amount = as.numeric(amount)",
+            "amount = as.numeric(gsub(\"[^0-9.]\", \"\", amount))", code, fixed = TRUE)
+new <- rewind_script(text = code, key = "order_id")
+compare_traces(tr, new)
+attr(compare_traces(tr, new), "issues")
+```
+
+## Ship it in a container
+
+`containerize()` reads a script without running it, finds every package it
+uses (`library()`, `require()`, `requireNamespace()` and `pkg::fun`), and
+writes a Docker recipe:
+
+```{r}
+dir <- tempfile("job-")
+dir.create(dir)
+writeLines(c("library(stats)", "d <- read.csv('sales.csv')", "print(summary(d))"),
+           file.path(dir, "job.R"))
+writeLines("x,y\n1,2", file.path(dir, "sales.csv"))
+
+containerize(file.path(dir, "job.R"))
+cat(readLines(file.path(dir, "container", "Dockerfile")), sep = "\n")
+```
+
+The recipe:
+
+* starts from `rocker/r-ver` at your R version;
+* installs every package at the version installed on your machine, through
+  `pak`, which also installs the system libraries those packages need;
+* copies in data files the script reads by relative path;
+* runs the script with `Rscript`.
+
+The generated `README.md` has the two commands to build and run it.
+`script_packages()` returns just the package list, which is handy for a
+`DESCRIPTION` or a lock file.
+
+```{r, include = FALSE}
+unlink(dir, recursive = TRUE)
+```

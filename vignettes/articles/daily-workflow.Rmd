@@ -1,0 +1,123 @@
+---
+title: "Using rewindr every day"
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+```
+
+rewindr is not a tool you set up once. It works more like a spell-checker
+for data: run it when numbers look wrong, before you share results, and
+inside jobs that run without you watching. This article covers the five
+moments where it saves the most time.
+
+## 1. When a result looks wrong
+
+The report is short, a total looks off, or a join "lost" customers. This is
+the main use.
+
+**In RStudio:** open the script, then go to **Addins → Rewind current
+script**. The app opens on the first problem step, already scrolled to the
+line in your code.
+
+1. Read the **Issues & fixes** tab. It says what went wrong and suggests code.
+2. Press ← and → (or drag the slider) to step through the states before and
+   after, and watch where rows or values change.
+3. Fix the code and run the addin again. You are done when no step in the
+   timeline has a coloured marker.
+
+**From the console:**
+
+```{r}
+library(rewindr)
+tr <- rewind_script("analysis.R", key = "id")   # key = your row id column, if any
+tr                                               # summary and first problem
+blame(tr, "final_table")                         # why does this object look like this?
+blame(tr, "final_table", "revenue")              # where did this column get NAs or change?
+scrub(tr)                                        # open the app
+```
+
+After an addin run, the recording is still available with `last_trace()`:
+
+```{r}
+issues(last_trace())
+```
+
+## 2. While you write a pipeline
+
+Instead of ending each line with `|> nrow()` or `|> View()`, select the
+pipeline you are building and run **Addins → Rewind selection**. Every
+`filter()`, `mutate()` and join shows what it did to the rows and columns.
+
+From the console:
+
+```{r}
+rewind(
+  sales |>
+    filter(!is.na(region)) |>
+    left_join(targets, by = c("region", "month")) |>
+    mutate(gap = revenue - target)
+)
+```
+
+If a join prints `!`, read the join report: it lists keys that differ only in
+whitespace or case, and lookup keys that are duplicated.
+
+## 3. Before you send results to anyone
+
+Make it a habit, like checking spelling before sending an email:
+
+```{r}
+tr <- rewind_script("monthly_report.R")
+issues(tr)   # no rows means no silent row loss, no surprise NAs, no join duplication
+```
+
+`issues(tr, "info")` also lists the expected changes, such as rows removed by
+filters and new columns, which make a useful audit trail to attach to a
+report.
+
+## 4. In scheduled jobs (a quality gate)
+
+A nightly ETL job should stop, not quietly publish bad numbers:
+
+```{r}
+tr <- rewindr::rewind_script(
+  "etl.R",
+  rules = rewindr::rewind_rules(max_row_loss = 0.02, max_join_unmatched = 0.01)
+)
+if (!is.na(rewindr::first_divergence(tr))) {
+  print(rewindr::issues(tr))
+  stop("Data check failed; see the issues above.")
+}
+```
+
+Tune the rules to your data with `rewind_rules()`. For example, raise
+`max_join_unmatched` if some customers are legitimately missing from a
+lookup table.
+
+## 5. When you hand a script over
+
+```{r}
+containerize("analysis.R")
+```
+
+This writes `container/Dockerfile`. It pins your R version and the exact
+version of every package the script uses, and copies in the data files the
+script reads. A colleague or a server can then run it with two `docker`
+commands, which are listed in the generated README.
+
+## Tips
+
+* **Use a key.** With `key = "order_id"` rewindr can say exactly which ids
+  were dropped or changed, not just how many rows.
+* **It runs your code again.** Your workspace is untouched, but anything the
+  script does outside R still happens: files written, database writes,
+  emails sent. For scripts like that, select and rewind just the
+  data-wrangling part.
+* **Large data.** Every state is kept in memory. Columns that do not change
+  are shared between states, so memory use is lower than it sounds, but on
+  very large tables rewind a sample first (for example
+  `slice_sample(n = 1e5)`) or one section at a time.
+* **Pipes are split into stages; plain statements are not.** A line such as
+  `df$x <- as.numeric(df$x)` or `dt[, x := ...]` is recorded as one step
+  that creates a new version of `df` or `dt`.

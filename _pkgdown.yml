@@ -1,0 +1,86 @@
+url: https://neu-data.github.io/rewindr/
+
+template:
+  bootstrap: 5
+  bslib:
+    primary: "#055F56"
+    secondary: "#0B376C"
+    navbar-bg: "#04242F"
+    link-color: "#0B376C"
+    headings-color: "#04242F"
+    base_font: {google: "Source Sans 3"}
+    heading_font: {google: "Source Sans 3"}
+    code_font: {google: "JetBrains Mono"}
+
+navbar:
+  bg: primary
+  type: dark
+  structure:
+    left: [intro, reference, articles, news]
+    right: [search, neudata, github]
+  components:
+    neudata:
+      icon: fa-globe
+      href: https://www.neu-data.com
+      aria-label: Neudata website
+
+footer:
+  structure:
+    left: neudata
+    right: built_with
+  components:
+    neudata: "Developed by [**Neudata Consulting Ltd**](https://www.neu-data.com) · *Insight. Impact. Innovation.*"
+
+home:
+  sidebar:
+    structure: [links, license, community, citation, authors, dev]
+
+articles:
+  - title: Guides
+    navbar: ~
+    contents:
+      - articles/daily-workflow
+      - articles/time-travel-app
+  - title: Reference guides
+    navbar: Reference guides
+    contents:
+      - articles/what-rewindr-checks
+      - articles/fixing-and-shipping
+
+reference:
+  - title: Record
+    desc: Run code one step at a time and keep the data after every step.
+    contents:
+      - rewind
+      - rewind_script
+      - rewind_example
+  - title: Find what went wrong
+    contents:
+      - issues
+      - first_divergence
+      - blame
+      - lineage
+      - timeline
+      - rewind_rules
+  - title: Inspect states
+    contents:
+      - at_step
+      - step_diff
+      - df_diff
+  - title: Time-travel app
+    contents:
+      - scrub
+      - addins
+      - last_trace
+  - title: Fix and compare
+    contents:
+      - suggest_fixes
+      - ask_claude
+      - compare_traces
+  - title: Ship
+    contents:
+      - containerize
+      - script_packages
+  - title: Package
+    contents:
+      - rewindr-package

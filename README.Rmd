@@ -1,0 +1,110 @@
+---
+output: github_document
+---
+
+<!-- README.md is generated from README.Rmd. Please edit that file and rebuild with devtools::build_readme() -->
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.path = "man/figures/README-",
+  out.width = "100%"
+)
+options(width = 100)
+```
+
+```{=html}
+<div align="center">
+<img src="https://raw.githubusercontent.com/neu-data/.github/main/assets/banner.svg" alt="Neudata Consulting Ltd" width="100%" />
+</div>
+```
+
+# rewindr <img src="man/figures/logo.png" align="right" height="139" alt="rewindr logo" />
+
+<!-- badges: start -->
+[![R-CMD-check](https://github.com/neu-data/rewindr/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/neu-data/rewindr/actions/workflows/R-CMD-check.yaml)
+[![pkgdown](https://img.shields.io/badge/docs-pkgdown-055F56?style=flat)](https://neu-data.github.io/rewindr/)
+[![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-0B376C.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
+![Neudata](https://img.shields.io/badge/Neudata-R%20package-04242F?style=flat)
+<!-- badges: end -->
+
+**Time-travel debugging for data pipelines.**
+
+Your monthly report is a third short. Somewhere upstream a join dropped
+customers whose ids had a trailing space, a conversion turned `"$12.50"`
+into `NA`, and a filter quietly removed those rows. Finding that usually
+means adding `print()` calls and running the script again, several times.
+
+rewindr records the data after **every** step of a pipeline or script,
+compares each step with the one before, and tells you the first step where
+the data went wrong, and why. Then you can scrub backward and forward
+through every state in an interactive app.
+
+![The rewindr time-travel app](man/figures/README-app.png)
+
+## Installation
+
+Install the development version from GitHub:
+
+``` r
+# install.packages("remotes")
+remotes::install_github("neu-data/rewindr")
+```
+
+For the app and the Claude integration, also install the suggested packages:
+
+``` r
+install.packages(c("shiny", "bslib", "DT", "httr2", "jsonlite"))
+```
+
+## Example
+
+The package ships a small sales pipeline with three bugs planted in it.
+Record it, with `order_id` as the row key:
+
+```{r, eval = requireNamespace("dplyr", quietly = TRUE)}
+library(rewindr)
+tr <- rewind_script(rewind_example(), key = "order_id")
+tr
+```
+
+Ask why `clean` looks the way it does:
+
+```{r, eval = requireNamespace("dplyr", quietly = TRUE)}
+blame(tr, "clean")
+```
+
+Then open the app:
+
+``` r
+scrub(tr)
+```
+
+In RStudio, **Addins â†’ Rewind current script** does all of this for the
+script in your editor.
+
+## What it does
+
+| | |
+|---|---|
+| **Records every state** | Splits `|>` and `%>%` pipelines into stages, runs scripts statement by statement, and turns in-place edits (`df$x <- ...`, `dt[, x := ...]`) into new versions. Code runs in a sandbox, and errors are recorded instead of thrown. |
+| **Compares states** | Rows gained or lost, columns added or removed, type changes, new `NA`s and changed cells, aligned by position or by `key`. |
+| **Checks joins** | Unmatched rows, keys that differ only in whitespace or case, duplicated lookup keys that multiply rows, and key type mismatches. |
+| **Finds the first divergence** | Silent row loss, join fan-out, coercion `NA`s, filters that drop rows only because of `NA`, and empty results, tuned with `rewind_rules()`. `blame()` follows an object or column back to the step that explains it. |
+| **Scrubs through time** | `scrub()` opens an app with a slider, play button and arrow keys, the highlighted source line, the data at each step, the diff and the join report. |
+| **Proposes fixes** | `suggest_fixes()` works offline. `ask_claude()` returns a diagnosis and a revised script, which you can re-run in a sandbox and compare with `compare_traces()`. |
+| **Ships the script** | `containerize()` writes a Dockerfile with your R version and every package pinned at the installed version. |
+
+## Learn more
+
+* [Get started](https://neu-data.github.io/rewindr/articles/rewindr.html)
+* [Using rewindr every day](https://neu-data.github.io/rewindr/articles/daily-workflow.html)
+* [A tour of the time-travel app](https://neu-data.github.io/rewindr/articles/time-travel-app.html)
+* [What rewindr checks](https://neu-data.github.io/rewindr/articles/what-rewindr-checks.html)
+* [Fixing code and shipping it](https://neu-data.github.io/rewindr/articles/fixing-and-shipping.html)
+
+---
+
+Developed by [Neudata Consulting Ltd](https://www.neu-data.com) Â·
+*Insight. Impact. Innovation.*

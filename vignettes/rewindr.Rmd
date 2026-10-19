@@ -1,0 +1,154 @@
+---
+title: "Get started with rewindr"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Get started with rewindr}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+has_dplyr <- requireNamespace("dplyr", quietly = TRUE)
+options(width = 90)
+```
+
+A data pipeline rarely fails loudly. More often it finishes, and the numbers
+at the end are a little smaller than they should be. A join quietly dropped
+customers whose ids had a trailing space. A conversion turned `"$12.50"` into
+`NA`. A filter then removed those `NA` rows without telling anyone.
+
+The usual way to find the step that went wrong is to add `print()` and
+`nrow()` calls and run the script again. rewindr instead records the data
+after **every** step, compares each step with the one before, and tells you
+the first step where the data diverged from what you would expect.
+
+```{r setup}
+library(rewindr)
+```
+
+## Record a pipeline
+
+`rewind()` takes a pipeline (native `|>` or magrittr `%>%`) and runs it one
+stage at a time:
+
+```{r}
+tr <- rewind(mtcars |> subset(cyl == 4) |> transform(kpl = mpg * 0.425))
+tr
+```
+
+Every row of that printout is a state you can go back to:
+
+```{r}
+at_step(tr, 2) |> head(3)
+step_diff(tr, 3)
+```
+
+Code runs in a sandbox environment, so nothing in your workspace changes.
+You can also pass a `{ }` block of several statements, and in-place edits
+such as `df$x <- ...` become new versions of the object.
+
+## Record a whole script
+
+Most real problems sit in scripts. `rewind_script()` runs a file statement by
+statement, splits each pipeline into its stages, and keeps every version of
+every data frame. The package ships a small sales pipeline with three bugs
+planted in it:
+
+```{r, eval = FALSE}
+file.show(rewind_example())
+```
+
+```{r, echo = FALSE, comment = ""}
+cat(readLines(rewind_example())[-(1:2)], sep = "\n")
+```
+
+Record it, using `order_id` as the row key so rewindr can tell exactly which
+orders disappear:
+
+```{r, eval = has_dplyr}
+tr <- rewind_script(rewind_example(), key = "order_id")
+tr
+```
+
+The markers on the left mean `!` warning, `x` error and `i` information. The
+first warning is at step 8, where `as.numeric()` turned some amounts into
+`NA`.
+
+## Find out what went wrong
+
+`issues()` lists every problem, with a suggested fix:
+
+```{r, eval = has_dplyr}
+iss <- issues(tr)
+knitr::kable(iss[, c("step", "type", "message")])
+```
+
+`blame()` follows an object back through every step that built it and keeps
+the steps that explain its current state. Ask about a whole object:
+
+```{r, eval = has_dplyr}
+blame(tr, "clean")
+```
+
+or about a single column:
+
+```{r, eval = has_dplyr}
+blame(tr, "clean", "amount")
+```
+
+The join step carries a full report: how many rows found no match, which
+keys differ only in whitespace or case ("near misses"), and which lookup keys
+are duplicated:
+
+```{r, eval = has_dplyr}
+join_step <- tr$steps[[9]]$join
+join_step[c("unmatched_rows", "unmatched_pct", "n_near_miss", "near_miss_keys", "dup_y_examples")]
+```
+
+## Get a fix
+
+`suggest_fixes()` turns the issues into code, without any network access:
+
+```{r, eval = has_dplyr}
+fx <- suggest_fixes(tr)
+for (i in seq_len(nrow(fx))) cat(sprintf("Step %d: %s\n%s\n\n", fx$step[i], fx$problem[i], fx$suggestion[i]))
+```
+
+Apply the fixes, record the script again, and compare the two runs:
+
+```{r, eval = has_dplyr}
+code <- readLines(rewind_example())
+code <- sub("amount = as.numeric(amount)",
+            "amount = as.numeric(gsub(\"[^0-9.]\", \"\", amount))", code, fixed = TRUE)
+code <- sub("inner_join(customers, by = \"customer_id\")",
+            paste("inner_join(customers |> mutate(customer_id = toupper(trimws(customer_id))) |>",
+                  "distinct(customer_id, .keep_all = TRUE), by = \"customer_id\")"),
+            code, fixed = TRUE)
+fixed <- rewind_script(text = code, key = "order_id")
+compare_traces(tr, fixed)
+nrow(issues(fixed))
+```
+
+No issues left, and `clean` now keeps every valid order.
+
+## Scrub through it
+
+In an interactive session, `scrub()` opens the same recording as an app. You
+can drag a slider (or use the arrow keys) back and forward through every
+state, and see the source line, the data, the diff and the join report for
+each one:
+
+```{r, eval = FALSE}
+scrub(tr)
+```
+
+In RStudio, the **Addins** menu has *Rewind current script* and *Rewind
+selection*, which do all of the above for the code in your editor.
+
+## Where next
+
+* The [website](https://neu-data.github.io/rewindr/) has articles on using
+  rewindr every day, a tour of the app with screenshots, everything rewindr
+  checks, and fixing code with Claude and shipping it in a container.
+* `?rewind_rules` explains how to make the checks stricter or looser.
